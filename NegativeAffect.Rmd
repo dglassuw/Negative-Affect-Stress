@@ -1,0 +1,441 @@
+---
+title: "The role of daily stress, age, and sex on negative affect"
+author: "Delaney Glass"
+date: "December 15, 2020"
+output:
+bookdown::html_document2: default
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(plyr)
+library(magrittr)
+library(dplyr)
+library(nlme)
+library(pander)
+panderOptions('round', 3)
+panderOptions('keep.trailing.zeros', TRUE)
+library(ggplot2)
+library(sjPlot) # table functions
+library(sjmisc) # sample data
+library(lme4) # fitting models
+library(MASS)
+library(nlme)
+library(brms)
+```
+
+## Abstract
+
+Negative affect, which is a cumulative term for emotional or psychological disposition including propensity towards depression, nervousnesness, restlessness, anger, and sadness, has been examined in relation to a host of biobehavioral factors. Over the lifecourse, individuals encounter a variety of stressors and embody varying emotional and physiological states. There is considerable evidence that there is both high intradindividual variation in responsivity to stressors and reporting negative affect in relation to daily stresses experienced[@mroczek2004a] Responsivity to stress and likelihood of reporting negative affect varies by age and biological sex assigned at birth[@mroczek2004]. In this project, I investigate whether negative affect varies systematically across time for individuals, and whether between individual change in negative affect varies over time by change in daily stress severity, biological sex, and age. I use longitudinal linear mixed modeling both inferential and bayesian to answer these questions using publicly available data from the National Study of Daily Experiences (NSDE). The SDE is a subset of the MIDUS Cohort in 1996-1997 with 8 measurement occasions across a 1 year period for individuals ages 20-74.
+
+## Motivation and study objectives
+
+The intraindividual variation of negative affect (a summed score relating to experiences of depressive mood, nervousness, and more) in relation to stress reactivity (reported severity of stressors experienced) warrants further investigation by age and biological sex in a longitudinal design. My study objectives were to investigate the following questions:
+
+1)  How is negative affect impacted by daily change in stressors for individuals & between individuals?
+
+2)  How is between-individual variation in negative affect impacted by daily stress severity, age, and sex?
+
+## Data description
+
+I utilized the National Study of Daily Experiences 1996-1997 which is publicly available. This data measures multiple types of daily stress experiences among a sub-cohort of participants in the National Survey of Midlife in the United States (MIDUS). Participants were interviewed up to 8 times over the course of 1996-1997, wherein most participants have 6-8 interview occasions. In the full dataset, they were asked about daily experiences, in particular stressful experiences. In my models, I made a sum score of negative affect and stress severity score for every interview occasion, and use continuous age, categorical age, and biological sex as additional covariates.
+
+**Variable Descriptions**
+
+**Age**
+
+-   Continuous ages 20-74 (treated as time-invariant because ages likely not to change over the course of \<=1year)
+
+**Sex (originally termed gender)**
+
+-   1=Male, 2=Female
+
+**Sum of Stress Severity**
+
+-   Summed scores on each interview occasion of 4 stem questions. Participants are asked whether they experienced a stressful event at work/school/home/with a friend (yes/no) and then rate their severity on a scale of 1-5 as very stressful to not at all stressful. In my coding, I re-coded the scale to make intuitive sense where 1=not at all stressful and 5=very stressful.
+
+**Sum of Negative Affect**
+
+-   Summed scores on each interview occasion of 11 stem questions about depression, anxiety, sadness, anger, nervousness and other mood-related questions. Participants are asked the degree to which they feel those moods and I re-coded it to be 0=None of the time and 5=all of the time. At every time point the sum score ranges from 0 to 50.
+
+## Data Tidying
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+#load the data 
+
+load("~/Dropbox/UW 2020-2021/Applied Longitudinal Data/dailystress.rda")
+dailystress<-da03725.0001
+rm(da03725.0001)
+
+#get familiar with observations/individual in this data
+countsbyID<-count(dailystress,c("M2ID"))
+summary(countsbyID)
+mean(countsbyID$freq)
+
+#only keep variables of interest for this analysis
+colnames(dailystress)
+keeps <- c(1,3:7,151:161,293:303,223,225,233,235,243,249,257,275,283,285,105,122,305:310,15:16)
+dailystress = dailystress[keeps]
+
+```
+
+```{r echo=FALSE,results='hide', warning=FALSE}
+
+dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(5) NONE OF THE TIME")] <- 1
+    x
+  }))
+dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(4) A LITTLE OF THE TIME")] <- 2
+    x
+  }))
+  
+dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(3) SOME OF THE TIME")] <- 3
+    x
+  }))
+  
+  dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(2) MOST OF THE TIME")] <- 4
+    x
+  }))
+  
+    dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(1) ALL OF THE TIME")] <- 5
+    x
+  }))
+    
+    dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(1) YES")] <- 1
+    x
+  }))
+    
+    dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(2) NO")] <- 0
+    x
+  }))
+
+##change negative affect variables into numeric from factor
+cols = c(7:17)
+dailystress[,cols] %<>% lapply(function(x) as.numeric(as.character(x)))
+
+##change textual answers to numbers for daily stress variables
+dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(1) A LOT")] <- 1
+    x
+  }))
+dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(2) SOME")] <- 2
+    x
+  }))
+  
+dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(3) A LITTLE")] <- 3
+    x
+  }))
+  
+  dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(4) NOT AT ALL")] <- 4
+    x
+  }))
+colnames(dailystress)
+
+cols = c(29:38)
+dailystress[,cols] %<>% lapply(function(x) as.numeric(as.character(x)))
+
+summary(dailystress$dailystress)
+summary(dailystress$B1PGENDER) #gender
+  dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(1) MALE")] <- 1
+    x
+  }))
+  
+   dailystress <- as.data.frame( 
+  lapply(dailystress, function(x) {
+    levels(x)[levels(x) %in% c("(2) FEMALE")] <- 2
+    x
+  }))
+
+cols = c(4,47:48)
+dailystress[,cols] %<>% lapply(function(x) as.numeric(as.character(x)))
+
+## Number daily stress variables
+
+#For those who don't report stressor for that day, get assigned a zero (no stress reported). Those who reported a stressor, are reporting severity 1-5 (not at all stressful to very stressful)
+
+dailystress$A2DF3B[dailystress$A2DF3==0]<- 0
+dailystress$A2DF4B[dailystress$A2DF4==0]<- 0
+dailystress$A2DF5C[dailystress$A2DF5==0]<- 0
+dailystress$A2DF6C[dailystress$A2DF6==0]<- 0
+dailystress$A2DF7C[dailystress$A2DF7==0]<- 0 #excluding this because no one reported additional stressors
+
+##make new scale variable for summed daily stress
+dailystress$dailystress <-rowSums(dailystress[, c(30,32,34,36)],na.rm = TRUE)
+
+##make new scale variable for summed negative affect
+dailystress$negaffect <- rowSums(dailystress[,c(7:17)], na.rm = TRUE)
+
+dailystress$negaffect<-ceiling(dailystress$negaffect) #when summing likert scales, best practice to round
+dailystress$dailystress<-ceiling(dailystress$dailystress)
+
+##make age continuous numeric
+dailystress$A1PAGE_M2<-as.numeric(as.character(dailystress$A1PAGE_M2))
+
+##make factor
+
+dailystress$B1PGENDER<-as.factor(dailystress$B1PGENDER)
+
+
+```
+
+## Exploratory Analyses
+
+```{r echo=FALSE, warning=FALSE}
+
+## Use ggplot to make exploratory plots 
+
+#overall trend in negative affect, lines colored by sex
+overalltrend <- ggplot(data=dailystress, aes(x=A2DDAY, y=negaffect, group=M2ID, color=B1PGENDER)) +
+  geom_line(alpha=0.5) +
+  ggtitle("Negative affect by day across sexes") +
+  theme_bw() +
+  scale_color_manual(values=c("mediumorchid4", "darkgoldenrod1")) +
+xlab("Interview Day") +
+ylab("Summed Negative Affect") + labs(color="Sex")
+
+#facet plot for clarity
+facetsex<-overalltrend +
+  facet_wrap(.~B1PGENDER)
+
+#add mean to facet plot
+
+facetsex<-print (facetsex + 
+stat_summary(aes(group = B1PGENDER), geom = "line", fun = mean, color= "black", size=1.2) +
+  stat_summary(aes(group = B1PGENDER), geom = "point", fun = mean,color= "black", size=3, shape=18) +
+     facet_grid(. ~ B1PGENDER))
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+#plot how daily stress may vary across interview days
+
+set.seed(10715)
+# sample 20 without replacement based on subject IDs
+sampled_persons3 <- sample(unique(dailystress$M2ID), size=20, replace=FALSE)
+
+individualsamples2<-ggplot(data=dailystress %>%
+           filter(M2ID %in% sampled_persons3),
+       aes(x=A2DDAY, y=dailystress, group=M2ID, color=B1PGENDER)) +
+    geom_line(alpha=0.5) +
+    ggtitle("Summed Daily Stress by Biological Sex") +
+    theme_bw() +
+    scale_color_manual(values=c("turquoise4", "black")) +
+    xlab("Interview Day") + ylab("Sumemd Daily Stress") + labs(color="Sex") +
+    facet_wrap( ~ M2ID, ncol=5)
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+#Exploratory plots for age continuous and categorical
+
+#make categorical variable for age
+
+dailystress$agecat<-cut(dailystress$A1PAGE_M2, c(19,24,34,44,54,64,74),
+labels=c("20-24", "25–34", "35–44", "45–54", "55–64", "65–74"))
+
+##overall trends 
+ageplot <- ggplot(data=dailystress[ !is.na(dailystress$agecat),], aes(x=A2DDAY, y=negaffect, group=M2ID, color=agecat)) +
+  geom_line(alpha=0.5) +
+  ggtitle("Negative affect across age groups") +
+  theme_bw() +
+  scale_color_manual(values=c("hotpink", "darkgoldenrod1", "black", "darkviolet", "turquoise", "red"))+
+xlab("Interview Day")+
+ylab("Summed negative affect")
+
+# facet 
+facetage<-ageplot +
+  facet_wrap(. ~ agecat)
+
+# add mean
+
+facetage<-print (facetage + 
+stat_summary(aes(group = agecat), geom = "line", fun = mean, color= "grey", size=1.2) +
+  stat_summary(aes(group = agecat), geom = "point", fun = mean,color= "grey", size=3, shape=18) +
+     facet_wrap(. ~ agecat))
+
+## make plot to explore how stress severity changes across age categories
+stressage<-ggplot(data=dailystress[ !is.na(dailystress$dailystress) & !is.na(dailystress$agecat),], aes(x=A2DDAY, y=dailystress, group=M2ID, color=agecat)) +
+  geom_line(alpha=0.5) +
+  ggtitle("Daily stress across age groups") +
+  theme_bw() +
+  scale_color_manual(values=c("hotpink", "darkgoldenrod1", "black", "darkviolet", "turquoise", "red"))+
+xlab("Interview Day")+
+ylab("Summed Daily Stress")
+
+#facet 
+stressage<-stressage +
+  facet_wrap(. ~ agecat)
+
+#add mean
+stressage<-print (stressage + 
+stat_summary(aes(group = agecat), geom = "line", fun = mean, color= "grey", size=1.2) +
+  stat_summary(aes(group = agecat), geom = "point", fun = mean,color= "grey", size=3, shape=18) +
+     facet_wrap(. ~ agecat))
+
+
+
+```
+
+## Frequentist Models
+
+```{r echo=FALSE, warning=FALSE}
+
+# fit using maximum likelihood
+library(nlme)
+
+# age (continous)
+mod1 <- lme(negaffect ~ dailystress + A1PAGE_M2 + B1PGENDER,
+             data=dailystress,
+             random= ~ 1|M2ID,
+             method="ML", na.action=na.omit)
+summary(mod1)
+intervals(mod1)
+VarCorr(mod1)
+
+# age (categorical)
+mod2 <- lme(negaffect ~ dailystress + agecat + B1PGENDER,
+             data=dailystress,
+             random= ~1|M2ID,
+             method="ML", na.action=na.omit)
+summary(mod2)
+intervals(mod2)
+VarCorr(mod2)
+
+#interaction between daily stress and age
+mod3 <- lme(negaffect ~ dailystress*A1PAGE_M2 + B1PGENDER,
+             data=dailystress,
+             random= ~ 1|M2ID,
+             method="ML", na.action=na.omit)
+
+summary(mod3) #interaction suggests impact of daily stress on negaffect lessens with age
+intervals(mod3)
+VarCorr(mod3)
+
+#interaction between daily stress and sex
+mod4 <- lme(negaffect ~ dailystress*B1PGENDER + A1PAGE_M2,
+             data=dailystress,
+             random= ~ 1|M2ID,
+             method="ML", na.action=na.omit)
+summary(mod4)
+intervals(mod4)
+VarCorr(mod4)
+
+#compare models
+
+compare<-anova(mod1,mod2,mod3,mod4)
+
+```
+
+```{r echo=FALSE, results='hide', warning=FALSE}
+
+#summarize results from model 3
+
+fixed_eff<-fixef(mod3)
+names(fixed_eff)
+fixed_eff<-summary(mod3)$tTable
+fixed_eff
+
+#change row and column names
+rownames(fixed_eff) <- c("Intercept","Stress Severity","Age","Sex", "Stress Severity*Age")
+colnames(fixed_eff) <- c("Estimate", "SE", "DF","t-value","p-value")
+
+fixed_eff<- as.data.frame(fixed_eff)
+keeps <- c("Estimate","SE", "p-value")
+fixed_eff = fixed_eff[keeps]
+
+```
+
+```{r echo=FALSE}
+pander(fixed_eff)
+
+```
+
+## Bayesian Models
+
+```{r, echo=FALSE, cache=TRUE, warnings=FALSE}
+
+# use brms, full Bayesian inference via Stan sampler and NUTS algorithm
+
+dailystress$B1PGENDER<-as.numeric(dailystress$B1PGENDER)
+  
+bmod1 <- brm(formula = negaffect ~ dailystress + A1PAGE_M2 + B1PGENDER + (1|M2ID),
+             data =dailystress, family = gaussian, 
+             prior = c(set_prior("normal(0,10)", class = "b", coef = "dailystress"),
+                       set_prior("normal(0,10)", class = "b", coef = "A1PAGE_M2"),
+                       set_prior("cauchy(0,2)" , class = "b", coef = "B1PGENDER")),
+             warmup = 1000, iter = 2000, chains = 4)
+
+summary(bmod1)
+plot(bmod1) #trace plots and density distribution
+conditional_effects(bmod1) #fixed effects
+VarCorr(bmod1)
+# var of random effect / var of random effect + variance of residual, porportion of the variance in population explained by individual variation. Key to understand outcome stability.
+# pseudo r squared % variation explained by fixed effects
+
+bmod2 <- brm(formula = negaffect ~ dailystress + agecat + B1PGENDER + (1|M2ID),
+             data = dailystress, family = gaussian,
+             prior = c(set_prior("normal(0,10)", class = "b")),
+             warmup = 1100, iter = 2500, chains = 4)
+
+
+summary(bmod2)
+plot(bmod2) 
+conditional_effects(bmod2) 
+VarCorr(bmod2)
+
+
+bmod3 <- brm(formula = negaffect ~ dailystress*A1PAGE_M2 + B1PGENDER + (1|M2ID),
+             data = dailystress, family = gaussian,
+             prior = c(set_prior("normal(0,10)", class = "b")),
+             warmup = 1100, iter = 2000, chains = 4)
+
+summary(bmod3)
+plot(bmod3) 
+conditional_effects(bmod3) 
+VarCorr(bmod3)
+
+bmod4 <- brm(formula = negaffect ~ dailystress*B1PGENDER + A1PAGE_M2 + (1|M2ID),
+             data = dailystress, family = gaussian,
+             prior = c(set_prior("normal(0,10)", class = "b")),
+             warmup = 1000, iter = 2000, chains = 4)
+
+summary(bmod4)
+plot(bmod4) 
+conditional_effects(bmod4) 
+VarCorr(bmod4) 
+
+#compare models
+WAIC(bmod1, bmod2, bmod3, bmod4)
+
+#the Bayesian models very similar output to inferential models, which is not surprising in this case. 
+
+```
